@@ -1,0 +1,214 @@
+<meta name='viewport' content='width=device-width, initial-scale=1'/><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto Study Timer</title>
+    <!-- MediaPipe CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
+    <style>
+        body {
+            background-color: #0d1117;
+            color: #c9d1d9;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+        .container {
+            text-align: center;
+            padding: 20px;
+            max-width: 400px;
+            width: 100%;
+        }
+        #timer {
+            font-size: 4rem;
+            font-weight: 700;
+            margin: 20px 0;
+            color: #58a6ff;
+            font-variant-numeric: tabular-nums;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-bottom: 20px;
+            background: #21262d;
+            border: 1px solid #30363d;
+        }
+        .status-active { color: #3fb950; border-color: #238636; }
+        .status-paused { color: #f85149; border-color: #da3633; }
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+        button {
+            background-color: #21262d;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        button:active { background-color: #30363d; }
+        .video-container {
+            position: relative;
+            width: 140px;
+            height: 105px;
+            margin: 0 auto 20px auto;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #30363d;
+            background: #000;
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="video-container">
+        <video id="webcam" autoplay playsinline muted></video>
+    </div>
+
+    <div id="status" class="status-badge status-paused">🔴 Initializing Camera...</div>
+    
+    <div id="timer">00:00:00</div>
+
+    <div class="controls">
+        <button id="startBtn">Start Manual</button>
+        <button id="resetBtn">Reset</button>
+    </div>
+</div>
+
+<script>
+    let timerInterval = null;
+    let totalSeconds = 0;
+    let isRunning = false;
+    let absenceTimer = null;
+    const ABSENCE_THRESHOLD = 10000; // 10-second grace buffer before pausing
+
+    const timerDisplay = document.getElementById('timer');
+    const statusBadge = document.getElementById('status');
+    const videoElement = document.getElementById('webcam');
+    const startBtn = document.getElementById('startBtn');
+    const resetBtn = document.getElementById('resetBtn');
+
+    function formatTime(secs) {
+        const hrs = Math.floor(secs / 3600).toString().padStart(2, '0');
+        const mins = Math.floor((secs % 3600) / 60).toString().padStart(2, '0');
+        const s = (secs % 60).toString().padStart(2, '0');
+        return `${hrs}:${mins}:${s}`;
+    }
+
+    function updateTimerDisplay() {
+        timerDisplay.textContent = formatTime(totalSeconds);
+    }
+
+    function startTimer() {
+        if (!isRunning) {
+            isRunning = true;
+            timerInterval = setInterval(() => {
+                totalSeconds++;
+                updateTimerDisplay();
+            }, 1000);
+            statusBadge.textContent = "🟢 Seated & Studying";
+            statusBadge.className = "status-badge status-active";
+        }
+    }
+
+    function pauseTimer() {
+        if (isRunning) {
+            isRunning = false;
+            clearInterval(timerInterval);
+            statusBadge.textContent = "🟡 Away from Desk (Paused)";
+            statusBadge.className = "status-badge status-paused";
+        }
+    }
+
+    startBtn.addEventListener('click', () => {
+        if (isRunning) {
+            pauseTimer();
+            startBtn.textContent = "Resume";
+        } else {
+            startTimer();
+            startBtn.textContent = "Pause";
+        }
+    });
+
+    resetBtn.addEventListener('click', () => {
+        pauseTimer();
+        totalSeconds = 0;
+        updateTimerDisplay();
+        startBtn.textContent = "Start Manual";
+    });
+
+    // MediaPipe Face Detection Initialization
+    const faceDetection = new FaceDetection({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`
+    });
+
+    faceDetection.setOptions({
+        model: 'short',
+        minDetectionConfidence: 0.5
+    });
+
+    faceDetection.onResults((results) => {
+        if (results.detections && results.detections.length > 0) {
+            // Face found: clear any pending absence timer and run
+            if (absenceTimer) {
+                clearTimeout(absenceTimer);
+                absenceTimer = null;
+            }
+            if (!isRunning) {
+                startTimer();
+                startBtn.textContent = "Pause";
+            }
+        } else {
+            // Face missing: wait for grace threshold before pausing
+            if (isRunning && !absenceTimer) {
+                absenceTimer = setTimeout(() => {
+                    pauseTimer();
+                    startBtn.textContent = "Resume";
+                    absenceTimer = null;
+                }, ABSENCE_THRESHOLD);
+            }
+        }
+    });
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => {
+            await faceDetection.send({ image: videoElement });
+        },
+        width: 320,
+        height: 240
+    });
+
+    camera.start()
+        .then(() => {
+            statusBadge.textContent = "🟡 Ready - Sit in Front of Camera";
+        })
+        .catch((err) => {
+            statusBadge.textContent = "🔴 Camera Access Denied";
+            console.error(err);
+        });
+</script>
+
+</body>
+</html>
